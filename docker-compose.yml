@@ -16,6 +16,12 @@ x-spark-common: &spark-common
     - ./docker/jupyter/jars/delta-spark_2.12-3.2.0.jar:/opt/spark/jars/delta-spark_2.12-3.2.0.jar:ro
     - ./docker/jupyter/jars/delta-storage-3.2.0.jar:/opt/spark/jars/delta-storage-3.2.0.jar:ro
     - ./data:/opt/spark-data
+    # Also expose the data dir at the SAME path the Jupyter driver uses. Notebooks
+    # write absolute paths like /home/jovyan/data/x.csv; with a standalone cluster
+    # the executors (here, on the workers) run the write, so they must resolve that
+    # exact path. Mounting the same host dir at both locations gives driver and
+    # executors a shared filesystem view, so the FileOutputCommitter rename works.
+    - ./data:/home/jovyan/data
     - ./apps:/opt/spark-apps
   networks:
     - spark-net
