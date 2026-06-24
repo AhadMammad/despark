@@ -1,0 +1,15 @@
+lecturer-notes/
+docker/base/cache/
+data/
+logs/
+checkpoints/
+.env
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+*.egg-info/
+.DS_Store
+*.jar
+spark-warehouse/
+derby.log
+metastore_db/

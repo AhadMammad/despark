@@ -1,0 +1,103 @@
+version: "3.8"
+
+# Official Apache Spark image (Bitnami's public images were removed from Docker Hub).
+# Unlike Bitnami, this image has no SPARK_MODE/SPARK_* convention — master and worker
+# are launched explicitly via spark-class, and paths live under /opt/spark.
+x-spark-common: &spark-common
+  build:
+    context: ./docker/spark
+    dockerfile: Dockerfile
+  image: despark-spark:3.5.3   # custom image: apache/spark:3.5.3 + Python 3.11
+  volumes:
+    - ./conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+    - ./conf/log4j2.properties:/opt/spark/conf/log4j2.properties
+    # Delta Lake JARs (vendored alongside the Jupyter image) so cluster-side
+    # drivers/executors and `make submit` are Delta-capable too.
+    - ./docker/jupyter/jars/delta-spark_2.12-3.2.0.jar:/opt/spark/jars/delta-spark_2.12-3.2.0.jar:ro
+    - ./docker/jupyter/jars/delta-storage-3.2.0.jar:/opt/spark/jars/delta-storage-3.2.0.jar:ro
+    - ./data:/opt/spark-data
+    - ./apps:/opt/spark-apps
+  networks:
+    - spark-net
+
+services:
+  spark-master:
+    <<: *spark-common
+    container_name: spark-master
+    hostname: spark-master
+    command: >
+      bash -c "mkdir -p /tmp/spark-events &&
+      exec /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+      --host spark-master --port 7077 --webui-port 8080"
+    ports:
+      - "${SPARK_MASTER_WEBUI_PORT:-8080}:8080"
+      - "${SPARK_MASTER_PORT:-7077}:7077"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  spark-worker-1:
+    <<: *spark-common
+    container_name: spark-worker-1
+    hostname: spark-worker-1
+    command: >
+      bash -c "mkdir -p /tmp/spark-events &&
+      exec /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+      --webui-port 8081
+      --cores ${SPARK_WORKER_CORES:-2}
+      --memory ${SPARK_WORKER_MEMORY:-2G}
+      spark://spark-master:7077"
+    ports:
+      - "${SPARK_WORKER1_WEBUI_PORT:-8081}:8081"
+    depends_on:
+      spark-master:
+        condition: service_healthy
+
+  spark-worker-2:
+    <<: *spark-common
+    container_name: spark-worker-2
+    hostname: spark-worker-2
+    command: >
+      bash -c "mkdir -p /tmp/spark-events &&
+      exec /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+      --webui-port 8082
+      --cores ${SPARK_WORKER_CORES:-2}
+      --memory ${SPARK_WORKER_MEMORY:-2G}
+      spark://spark-master:7077"
+    ports:
+      - "${SPARK_WORKER2_WEBUI_PORT:-8082}:8082"
+    depends_on:
+      spark-master:
+        condition: service_healthy
+
+  jupyter:
+    build:
+      context: ./docker/jupyter
+      dockerfile: Dockerfile
+    container_name: jupyter
+    hostname: jupyter
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+      - "4040:4040"
+      - "4041:4041"
+      - "4042:4042"
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=spark-learn
+    volumes:
+      - ./notebooks:/home/jovyan/notebooks
+      - ./data:/home/jovyan/data
+      - ./apps:/home/jovyan/apps
+      - ./conf:/home/jovyan/conf
+    networks:
+      - spark-net
+    depends_on:
+      spark-master:
+        condition: service_healthy
+
+networks:
+  spark-net:
+    driver: bridge
