@@ -1,4 +1,4 @@
-.PHONY: up down build build-base rebuild rebuild-clean restart clean purge \
+.PHONY: up down build build-base fetch-jars rebuild rebuild-clean restart clean purge \
         new-user list-users require-user logs logs-master logs-jupyter status \
         jupyter-token spark-ui worker-1-ui worker-2-ui app-ui \
         submit seed-data shell-master shell-worker-1 shell-jupyter help
@@ -49,6 +49,14 @@ JUPYTER_IMAGE ?= despark-jupyter
 SPARK_TARBALL = spark-$(SPARK_VERSION)-bin-hadoop3.tgz
 SPARK_CACHE   = docker/base/cache
 
+# Delta Lake JARs are gitignored (not committed), so a fresh clone must fetch them
+# from Maven Central before any image build. See docker/jupyter/jars/README.md.
+DELTA_VERSION ?= 3.2.0
+JARS_DIR       = docker/jupyter/jars
+DELTA_SPARK_JAR   = $(JARS_DIR)/delta-spark_2.12-$(DELTA_VERSION).jar
+DELTA_STORAGE_JAR = $(JARS_DIR)/delta-storage-$(DELTA_VERSION).jar
+MAVEN = https://repo1.maven.org/maven2/io/delta
+
 # Host address used when printing UI URLs (first non-loopback IP, else localhost).
 HOST := $(shell hostname -I 2>/dev/null | awk '{print $$1}')
 ifeq ($(strip $(HOST)),)
@@ -88,10 +96,25 @@ up: build-base
 down:
 	$(COMPOSE) down
 
+# Download the Delta Lake JARs into docker/jupyter/jars/ if missing. The file
+# rules below mean an already-present JAR is never re-downloaded.
+fetch-jars: $(DELTA_SPARK_JAR) $(DELTA_STORAGE_JAR)
+
+$(DELTA_SPARK_JAR):
+	@echo "Fetching $(notdir $@) from Maven Central…"
+	curl -fL --retry 5 --retry-delay 3 -o $@ \
+	  "$(MAVEN)/delta-spark_2.12/$(DELTA_VERSION)/delta-spark_2.12-$(DELTA_VERSION).jar"
+
+$(DELTA_STORAGE_JAR):
+	@echo "Fetching $(notdir $@) from Maven Central…"
+	curl -fL --retry 5 --retry-delay 3 -o $@ \
+	  "$(MAVEN)/delta-storage/$(DELTA_VERSION)/delta-storage-$(DELTA_VERSION).jar"
+
 # Build the shared base image (Python + Java + Spark). The Spark tarball is
 # fetched to $(SPARK_CACHE)/ once and reused on every build — even after
-# `docker builder prune` — so the ~400 MB download never repeats.
-build-base:
+# `docker builder prune` — so the ~400 MB download never repeats. Depends on
+# fetch-jars so the Delta JARs exist before the jupyter image COPYs them.
+build-base: fetch-jars
 	@mkdir -p $(SPARK_CACHE)
 	@test -f $(SPARK_CACHE)/$(SPARK_TARBALL) || ( \
 		echo "Fetching $(SPARK_TARBALL) (~400 MB, one time)…" && \
@@ -205,6 +228,7 @@ help:
 	@echo "  make down            Stop all services"
 	@echo "  make build           Build images (uses layer cache — fast)"
 	@echo "  make build-base      Build just the shared base image (Python+Java+Spark)"
+	@echo "  make fetch-jars      Download the Delta Lake JARs (auto-run by build)"
 	@echo "  make rebuild         Fast cached rebuild + recreate containers (everyday)"
 	@echo "  make rebuild-clean   From-scratch image build (--no-cache; base reused)"
 	@echo "  make restart         down + up"
