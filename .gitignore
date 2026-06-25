@@ -4,6 +4,7 @@ data/
 logs/
 checkpoints/
 .env
+instances/
 .ipynb_checkpoints/
 __pycache__/
 *.pyc

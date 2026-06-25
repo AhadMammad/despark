@@ -7,7 +7,10 @@ x-spark-common: &spark-common
   build:
     context: ./docker/spark
     dockerfile: Dockerfile
-  image: despark-spark:3.5.3   # custom image: apache/spark:3.5.3 + Python 3.11
+    args:
+      # Per-user base image tag so the FROM chain stays within this instance.
+      BASE_IMAGE: ${BASE_IMAGE:-despark-base:3.5.3}
+  image: ${SPARK_IMAGE:-despark-spark:3.5.3}   # custom image: apache/spark:3.5.3 + Python 3.11
   volumes:
     - ./conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
     - ./conf/log4j2.properties:/opt/spark/conf/log4j2.properties
@@ -15,21 +18,23 @@ x-spark-common: &spark-common
     # drivers/executors and `make submit` are Delta-capable too.
     - ./docker/jupyter/jars/delta-spark_2.12-3.2.0.jar:/opt/spark/jars/delta-spark_2.12-3.2.0.jar:ro
     - ./docker/jupyter/jars/delta-storage-3.2.0.jar:/opt/spark/jars/delta-storage-3.2.0.jar:ro
-    - ./data:/opt/spark-data
+    # Per-user workspace. WORKSPACE defaults to the repo root (single-user mode);
+    # the provisioner sets it to instances/<user> for an isolated instance.
+    - ${WORKSPACE:-.}/data:/opt/spark-data
     # Also expose the data dir at the SAME path the Jupyter driver uses. Notebooks
     # write absolute paths like /home/jovyan/data/x.csv; with a standalone cluster
     # the executors (here, on the workers) run the write, so they must resolve that
     # exact path. Mounting the same host dir at both locations gives driver and
     # executors a shared filesystem view, so the FileOutputCommitter rename works.
-    - ./data:/home/jovyan/data
-    - ./apps:/opt/spark-apps
+    - ${WORKSPACE:-.}/data:/home/jovyan/data
+    - ${WORKSPACE:-.}/apps:/opt/spark-apps
   networks:
     - spark-net
 
 services:
   spark-master:
     <<: *spark-common
-    container_name: spark-master
+    container_name: ${INSTANCE:-despark}-spark-master
     hostname: spark-master
     command: >
       bash -c "mkdir -p /tmp/spark-events &&
@@ -46,7 +51,7 @@ services:
 
   spark-worker-1:
     <<: *spark-common
-    container_name: spark-worker-1
+    container_name: ${INSTANCE:-despark}-spark-worker-1
     hostname: spark-worker-1
     command: >
       bash -c "mkdir -p /tmp/spark-events &&
@@ -63,7 +68,7 @@ services:
 
   spark-worker-2:
     <<: *spark-common
-    container_name: spark-worker-2
+    container_name: ${INSTANCE:-despark}-spark-worker-2
     hostname: spark-worker-2
     command: >
       bash -c "mkdir -p /tmp/spark-events &&
@@ -82,21 +87,24 @@ services:
     build:
       context: ./docker/jupyter
       dockerfile: Dockerfile
-    container_name: jupyter
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-despark-base:3.5.3}
+    image: ${JUPYTER_IMAGE:-despark-jupyter}
+    container_name: ${INSTANCE:-despark}-jupyter
     hostname: jupyter
     ports:
       - "${JUPYTER_PORT:-8888}:8888"
-      - "4040:4040"
-      - "4041:4041"
-      - "4042:4042"
+      # Exactly two Spark application UIs are published per instance.
+      - "${SPARK_APP1_UI_PORT:-4040}:4040"
+      - "${SPARK_APP2_UI_PORT:-4041}:4041"
     environment:
       - SPARK_MASTER=spark://spark-master:7077
       - JUPYTER_ENABLE_LAB=yes
       - JUPYTER_TOKEN=spark-learn
     volumes:
-      - ./notebooks:/home/jovyan/notebooks
-      - ./data:/home/jovyan/data
-      - ./apps:/home/jovyan/apps
+      - ${WORKSPACE:-.}/notebooks:/home/jovyan/notebooks
+      - ${WORKSPACE:-.}/data:/home/jovyan/data
+      - ${WORKSPACE:-.}/apps:/home/jovyan/apps
       - ./conf:/home/jovyan/conf
     networks:
       - spark-net
@@ -106,4 +114,8 @@ services:
 
 networks:
   spark-net:
+    name: ${NETWORK_NAME:-despark-spark-net}
     driver: bridge
+    ipam:
+      config:
+        - subnet: ${SUBNET:-172.28.0.0/24}

@@ -4,7 +4,8 @@
 # Spark itself. The slow, stable steps (Delta JARs, Coursier, Almond) come before
 # requirements.txt, so editing a Python package doesn't re-trigger the Scala
 # kernel download.
-FROM despark-base:3.5.3
+ARG BASE_IMAGE=despark-base:3.5.3
+FROM ${BASE_IMAGE}
 
 # ── Delta Lake JARs ────────────────────────────────────────────────────────────
 # Vendored under ./jars and copied in (no download at build time). To bump the

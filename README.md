@@ -78,8 +78,71 @@ Navigate to `http://localhost:8888?token=spark-learn` and open any notebook unde
 make up            # start everything
 make down          # stop everything
 make restart       # stop + start
-make clean         # remove containers, volumes, and built images
+make clean         # remove containers, network, and volumes (KEEPS images)
 ```
+
+---
+
+## Multi-user on a shared VM
+
+Several people can run their own fully isolated cluster on the **same Ubuntu VM at
+the same time**. Each user is keyed off a **username**, which becomes the naming
+convention for every Docker object (compose project, containers, images, network,
+volumes) and drives automatic, conflict-free host ports and a unique subnet.
+
+```bash
+# 1. Provision an instance (writes instances/<name>.env + an isolated workspace)
+make new-user USER=alice
+
+# 2. Build that user's images and start their cluster
+make build USER=alice
+make up    USER=alice
+
+# Every other command takes USER= too:
+make status   USER=alice
+make submit   USER=alice APP=apps/beginner/word_count.py
+make seed-data USER=alice
+make logs     USER=alice
+make spark-ui USER=alice        # prints this instance's URL
+```
+
+A second user runs concurrently with zero conflicts:
+
+```bash
+make new-user USER=bob && make build USER=bob && make up USER=bob
+make list-users                 # show every instance with its index/ports/subnet
+```
+
+**How ports are assigned.** Each user gets an *instance index* (0, 1, 2, …). Ports
+are derived from it, so they never overlap:
+
+| Service | Port | (index `i`) |
+|---|---|---|
+| Spark Master UI | `8080 + i` | alice→8080, bob→8081 |
+| Spark Master RPC | `7077 + i` | |
+| Worker 1 UI | `8100 + i` | |
+| Worker 2 UI | `8200 + i` | |
+| JupyterLab | `8800 + i` | |
+| Spark app UI 1 / 2 | `4040 + i*2` / `4041 + i*2` | exactly two apps per instance |
+
+The network subnet is `172.(20+i).0.0/24`. Up to ~100 concurrent instances are
+supported. `make new-user` also **pre-flights** every port and refuses if one is
+already taken on the host.
+
+**Accessing from outside the VM.** All ports already publish on `0.0.0.0`, so they
+are reachable at `http://<VM-IP>:<port>` once the VM firewall / cloud security group
+allows the relevant port ranges (8080–8199, 8800+, 4040+). `make spark-ui USER=…`
+and friends print the exact URLs (using the VM's primary IP).
+
+**Tearing down an instance:**
+
+```bash
+make clean USER=alice    # remove alice's containers, network, volumes — KEEPS images
+make purge USER=alice    # full teardown: also remove alice's images, workspace + env
+```
+
+> Per-user images share Docker layers, so the per-user tags cost almost no extra
+> disk. `make clean` keeps them so a restart needs no rebuild.
 
 ---
 
