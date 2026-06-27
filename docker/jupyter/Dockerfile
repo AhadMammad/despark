@@ -78,6 +78,12 @@ RUN mkdir -p /home/jovyan/.jupyter && \
     printf "c.ServerApp.ip = '0.0.0.0'\nc.ServerApp.open_browser = False\nc.ServerApp.port = 8888\n" \
     > /home/jovyan/.jupyter/jupyter_server_config.py
 
+# Containers run as the invoking host user's UID (compose `user:`), not jovyan.
+# That UID has no passwd entry, so HOME (=/home/jovyan, set in compose) must be
+# writable by anyone for JupyterLab to create its runtime/config/.local dirs.
+# The bind-mounted notebooks/data/apps subdirs overlay this with host ownership.
+RUN chmod -R 777 /home/jovyan
+
 ENV PYSPARK_PYTHON=python3
 ENV PYSPARK_DRIVER_PYTHON=python3
 

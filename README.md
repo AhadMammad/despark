@@ -218,6 +218,21 @@ The Almond/Coursier step requires internet access. If behind a proxy, set `HTTP_
 **Notebook can't connect to cluster**
 Confirm the cluster is up (`make status`) and the SparkSession uses `spark://spark-master:7077` as the master URL — not `local[*]`.
 
+**`df.write` fails with "cannot create directory" (Linux only)**
+On a native Linux host, bind mounts keep numeric file ownership, so the Spark
+workers (which run the file-writing tasks) must run as the user that owns the
+workspace `data/` dir. The containers are pinned to `HOST_UID:HOST_GID`:
+
+- **Multi-user:** `scripts/provision.sh` captures your `id -u`/`id -g` into
+  `instances/<user>.env`. If you provisioned before this was added, re-run
+  `make new-user USER=<name>` to refresh the env file, then
+  `make rebuild USER=<name>` (the image perms also changed) and `make up USER=<name>`.
+- **Single-instance:** set `HOST_UID`/`HOST_GID` in `.env` to your `id -u`/`id -g`,
+  then `make rebuild`.
+
+Docker Desktop (Mac/Windows) remaps ownership automatically, so this only affects
+native Linux hosts/VMs.
+
 **Out of memory on workers**
 Lower `SPARK_WORKER_MEMORY` in `.env` to `1G`, then run `make restart`.
 

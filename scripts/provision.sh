@@ -42,6 +42,16 @@ if [[ ! "$USERNAME" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
 fi
 
 SPARK_VERSION="${SPARK_VERSION:-$SPARK_VERSION_DEFAULT}"
+
+# ── Host identity ───────────────────────────────────────────────────────────────
+# On a native Linux VM, bind mounts preserve numeric UID/GID exactly (no Docker
+# Desktop remapping). The Spark workers run the file-writing tasks (executors), so
+# they — and the Jupyter driver — must run as the UID/GID that owns this user's
+# workspace, otherwise `df.write` fails with "cannot create directory". Capture the
+# invoking user's identity and pin every container to it via compose `user:`.
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+
 ENV_FILE="$INSTANCES_DIR/$USERNAME.env"
 # Absolute path: compose only treats a volume source as a bind mount (not a named
 # volume) when it starts with / or ./ — an absolute path is unambiguous.
@@ -182,6 +192,11 @@ cat > "$ENV_FILE" <<EOF
 INSTANCE=$USERNAME
 INDEX=$INDEX
 COMPOSE_PROJECT_NAME=despark-$USERNAME
+
+# Run all containers as the provisioning user so Spark workers (executors) and the
+# Jupyter driver write to the bind-mounted workspace as its owner — no UID clash.
+HOST_UID=$HOST_UID
+HOST_GID=$HOST_GID
 
 SPARK_VERSION=$SPARK_VERSION
 SPARK_WORKER_MEMORY=$WORKER_MEMORY

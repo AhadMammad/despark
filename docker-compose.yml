@@ -11,6 +11,16 @@ x-spark-common: &spark-common
       # Per-user base image tag so the FROM chain stays within this instance.
       BASE_IMAGE: ${BASE_IMAGE:-despark-base:3.5.3}
   image: ${SPARK_IMAGE:-despark-spark:3.5.3}   # custom image: apache/spark:3.5.3 + Python 3.11
+  # Run master/workers as the host user (set per-instance by scripts/provision.sh).
+  # Executors run the file-writing tasks, so they must own the writes on the
+  # bind-mounted data dir; matching the host UID keeps output files owned by the
+  # user and avoids "cannot create directory" on native Linux bind mounts.
+  # Defaults to 1000:1000 for the single-instance .env path / Docker Desktop.
+  user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+  environment:
+    # An arbitrary UID has no /etc/passwd entry, so HOME is undefined — point it at
+    # a writable dir so Spark's launch scripts never try to write to /.
+    - HOME=/tmp
   volumes:
     - ./conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
     - ./conf/log4j2.properties:/opt/spark/conf/log4j2.properties
@@ -92,6 +102,11 @@ services:
     image: ${JUPYTER_IMAGE:-despark-jupyter}
     container_name: ${INSTANCE:-despark}-jupyter
     hostname: jupyter
+    # Same host UID/GID as the Spark cluster: driver and executors then share one
+    # identity, so files staged by executors and committed by the driver line up
+    # on the shared data mount. /home/jovyan is made world-writable in the image
+    # (see docker/jupyter/Dockerfile) so an arbitrary UID can use it as HOME.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     ports:
       - "${JUPYTER_PORT:-8888}:8888"
       # Exactly two Spark application UIs are published per instance.
@@ -101,6 +116,9 @@ services:
       - SPARK_MASTER=spark://spark-master:7077
       - JUPYTER_ENABLE_LAB=yes
       - JUPYTER_TOKEN=spark-learn
+      # HOME is undefined for an arbitrary UID with no passwd entry; pin it so
+      # JupyterLab writes its runtime/config under the (world-writable) home.
+      - HOME=/home/jovyan
     volumes:
       - ${WORKSPACE:-.}/notebooks:/home/jovyan/notebooks
       - ${WORKSPACE:-.}/data:/home/jovyan/data

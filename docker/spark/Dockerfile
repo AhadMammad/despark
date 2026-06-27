@@ -8,14 +8,17 @@ FROM ${BASE_IMAGE}
 # python3 in this image is Python 3.11 at /usr/local/bin/python3
 ENV PYSPARK_PYTHON=/usr/local/bin/python3
 
-# Mirror the UID used by the official apache/spark image. The Spark tarball
-# unpacks owned by its packager's UID (1000), not 185, so /opt/spark isn't
-# writable by this user — pre-create the worker's executor work dir and hand it
-# to spark, otherwise `spark.deploy.worker.Worker` fails to create /opt/spark/work
-# on startup and exits.
+# Containers run as the invoking host user's UID (compose `user:`), which has no
+# entry in this image's /etc/passwd. Pre-create the dirs the worker/executor must
+# write to and make them world-writable (sticky) so ANY UID can use them:
+#   /opt/spark/work  — the Worker fails to start if it can't create this
+#   /opt/spark/.ivy2 — coursier/ivy cache if a package is ever resolved at runtime
+# The `spark` user (UID 185) is kept only as the default identity for runs that
+# don't override `user:`. /opt/spark itself stays root-owned/read-only — it's just
+# the immutable runtime; only these scratch dirs need to be writable.
 RUN useradd -u 185 -m -s /bin/bash spark \
-    && mkdir -p /opt/spark/work \
-    && chown -R 185:0 /opt/spark/work
+    && mkdir -p /opt/spark/work /opt/spark/.ivy2 \
+    && chmod -R 1777 /opt/spark/work /opt/spark/.ivy2
 
 USER spark
 WORKDIR /opt/spark
