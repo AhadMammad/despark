@@ -69,20 +69,23 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r /tmp/requirements.txt
 
 # ── User setup ─────────────────────────────────────────────────────────────────
-RUN useradd -m -s /bin/bash jovyan
+# Bake a real user at the host UID/GID (images are built per-user, args passed by
+# compose). The driver must run as an identity that exists in /etc/passwd — same
+# Hadoop UserGroupInformation requirement as the cluster side — and own its home,
+# so no world-writable dirs are needed. Guards keep it idempotent.
+ARG HOST_UID=1000
+ARG HOST_GID=1000
+RUN set -eux; \
+    getent group  "${HOST_GID}" >/dev/null || groupadd -g "${HOST_GID}" jovyan; \
+    getent passwd "${HOST_UID}" >/dev/null || useradd -u "${HOST_UID}" -g "${HOST_GID}" -m -s /bin/bash jovyan; \
+    install -d -o "${HOST_UID}" -g "${HOST_GID}" /home/jovyan
 WORKDIR /home/jovyan
-USER jovyan
+USER ${HOST_UID}:${HOST_GID}
 
 # ── Jupyter config ─────────────────────────────────────────────────────────────
 RUN mkdir -p /home/jovyan/.jupyter && \
     printf "c.ServerApp.ip = '0.0.0.0'\nc.ServerApp.open_browser = False\nc.ServerApp.port = 8888\n" \
     > /home/jovyan/.jupyter/jupyter_server_config.py
-
-# Containers run as the invoking host user's UID (compose `user:`), not jovyan.
-# That UID has no passwd entry, so HOME (=/home/jovyan, set in compose) must be
-# writable by anyone for JupyterLab to create its runtime/config/.local dirs.
-# The bind-mounted notebooks/data/apps subdirs overlay this with host ownership.
-RUN chmod -R 777 /home/jovyan
 
 ENV PYSPARK_PYTHON=python3
 ENV PYSPARK_DRIVER_PYTHON=python3

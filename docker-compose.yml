@@ -10,6 +10,10 @@ x-spark-common: &spark-common
     args:
       # Per-user base image tag so the FROM chain stays within this instance.
       BASE_IMAGE: ${BASE_IMAGE:-despark-base:3.5.3}
+      # Bake a real user at the host UID/GID so the cluster can run as it (see the
+      # USER line in docker/spark/Dockerfile). Must match the `user:` below.
+      HOST_UID: ${HOST_UID:-1000}
+      HOST_GID: ${HOST_GID:-1000}
   image: ${SPARK_IMAGE:-despark-spark:3.5.3}   # custom image: apache/spark:3.5.3 + Python 3.11
   # Run master/workers as the host user (set per-instance by scripts/provision.sh).
   # Executors run the file-writing tasks, so they must own the writes on the
@@ -18,8 +22,8 @@ x-spark-common: &spark-common
   # Defaults to 1000:1000 for the single-instance .env path / Docker Desktop.
   user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
   environment:
-    # An arbitrary UID has no /etc/passwd entry, so HOME is undefined — point it at
-    # a writable dir so Spark's launch scripts never try to write to /.
+    # The baked user's home is /home/spark, but pin HOME to a guaranteed-writable
+    # dir so nothing depends on home perms for transient scratch.
     - HOME=/tmp
   volumes:
     - ./conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
@@ -99,13 +103,16 @@ services:
       dockerfile: Dockerfile
       args:
         BASE_IMAGE: ${BASE_IMAGE:-despark-base:3.5.3}
+        # Bake the driver's user at the host UID/GID (see docker/jupyter/Dockerfile).
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
     image: ${JUPYTER_IMAGE:-despark-jupyter}
     container_name: ${INSTANCE:-despark}-jupyter
     hostname: jupyter
     # Same host UID/GID as the Spark cluster: driver and executors then share one
     # identity, so files staged by executors and committed by the driver line up
-    # on the shared data mount. /home/jovyan is made world-writable in the image
-    # (see docker/jupyter/Dockerfile) so an arbitrary UID can use it as HOME.
+    # on the shared data mount. The image bakes a real user at this UID/GID, so it
+    # owns /home/jovyan and resolves in /etc/passwd (Hadoop UGI needs a real name).
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     ports:
       - "${JUPYTER_PORT:-8888}:8888"
@@ -116,8 +123,8 @@ services:
       - SPARK_MASTER=spark://spark-master:7077
       - JUPYTER_ENABLE_LAB=yes
       - JUPYTER_TOKEN=spark-learn
-      # HOME is undefined for an arbitrary UID with no passwd entry; pin it so
-      # JupyterLab writes its runtime/config under the (world-writable) home.
+      # The baked user owns /home/jovyan; pin HOME so JupyterLab writes its
+      # runtime/config there regardless of the resolved passwd home.
       - HOME=/home/jovyan
     volumes:
       - ${WORKSPACE:-.}/notebooks:/home/jovyan/notebooks
