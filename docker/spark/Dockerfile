@@ -8,6 +8,20 @@ FROM ${BASE_IMAGE}
 # python3 in this image is Python 3.11 at /usr/local/bin/python3
 ENV PYSPARK_PYTHON=/usr/local/bin/python3
 
+# ── Executor-side Python deps ──────────────────────────────────────────────────
+# Pandas UDFs / mapInPandas / toPandas serialize with Arrow and run the user's
+# Python on the EXECUTORS (the workers), not just the driver. So pandas + pyarrow
+# + numpy must exist in this cluster image too, or the executor Python raises
+# "ModuleNotFoundError: No module named 'pandas'" the moment a pandas_udf runs.
+# Versions are pinned to match the Jupyter driver (docker/jupyter/requirements.txt)
+# so the Arrow record-batch format is identical on both ends of the wire. Installed
+# as root, before the USER switch below, so it lands in system site-packages.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+        pandas==2.2.2 \
+        numpy==1.26.4 \
+        pyarrow==16.1.0
+
 # Containers run as the invoking host user's UID/GID (compose `user:`, set per
 # instance by scripts/provision.sh). That UID MUST exist in /etc/passwd, otherwise
 # Hadoop's UserGroupInformation login crashes the master/worker/executor on start
